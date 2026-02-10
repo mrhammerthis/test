@@ -75,6 +75,10 @@ Then open:
 - `LMB` — Fire Bolt
 - `RMB` — Spirit Lance
 - `Space` — Whirl
+- `Q` — Void Nova (unlocked from gear)
+- `I` — Inventory menu
+- `Esc` — Pause menu
+- `` ` `` — Developer cheat menu
 
 ## Notes
 

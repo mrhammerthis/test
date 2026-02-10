@@ -37,6 +37,26 @@ const ui = {
   chatgptMode: document.getElementById("chatgptMode"),
   openaiApiKey: document.getElementById("openaiApiKey"),
   genStatus: document.getElementById("genStatus"),
+  inventoryPopup: document.getElementById("inventoryPopup"),
+  closeInventoryPopup: document.getElementById("closeInventoryPopup"),
+  equipFeed: document.getElementById("equipFeed"),
+  pauseMenu: document.getElementById("pauseMenu"),
+  resumeGame: document.getElementById("resumeGame"),
+  cheatMenu: document.getElementById("cheatMenu"),
+  closeCheatMenu: document.getElementById("closeCheatMenu"),
+  cheatStatus: document.getElementById("cheatStatus"),
+  cheatHeal: document.getElementById("cheatHeal"),
+  cheatMana: document.getElementById("cheatMana"),
+  cheatLevel: document.getElementById("cheatLevel"),
+  cheatSpawn: document.getElementById("cheatSpawn"),
+  cheatGold: document.getElementById("cheatGold"),
+  cheatGodMode: document.getElementById("cheatGodMode"),
+  skillNova: document.getElementById("skillNova"),
+  cooldowns: {
+    fire: document.getElementById("cdFire"),
+    spirit: document.getElementById("cdSpirit"),
+    whirl: document.getElementById("cdWhirl"),
+    nova: document.getElementById("cdNova")
   cooldowns: {
     fire: document.getElementById("cdFire"),
     spirit: document.getElementById("cdSpirit"),
@@ -52,6 +72,7 @@ const controls = {
   fire: false,
   spirit: false,
   whirl: false,
+  nova: false,
   pointerLocked: false,
   aimPoint: new THREE.Vector3()
 };
@@ -59,6 +80,10 @@ const controls = {
 const game = {
   wave: 1,
   kills: 0,
+  scoreGold: 0,
+  combatLog: [],
+  drops: [],
+  equipped: [],
   totalSpawned: 0,
   scoreGold: 0,
   combatLog: [],
@@ -71,6 +96,9 @@ const game = {
   lootOrbs: [],
   hero: null,
   gameOver: false,
+  paused: false,
+  menu: { inventory: false, pause: false, cheat: false },
+  dev: { godMode: false },
   targetKillMilestones: [12, 30, 54, 80]
 };
 
@@ -99,6 +127,14 @@ class Hero {
     this.xp = 0;
     this.nextLevelXp = 140;
     this.rotationSpeed = 11;
+    this.cooldowns = { fire: 0, spirit: 0, whirl: 0, nova: 0 };
+    this.spellBook = {
+      fireScale: 1,
+      spiritScale: 1,
+      whirlScale: 1,
+      novaScale: 1,
+      novaUnlocked: false
+    };
 
     this.cooldowns = {
       fire: 0,
@@ -147,6 +183,7 @@ class Hero {
   }
 
   takeDamage(amount) {
+    if (game.dev.godMode) return;
     this.life = Math.max(0, this.life - amount);
     addLog(`Hero takes ${Math.round(amount)} damage`, "#ff9990");
     if (this.life <= 0) {
@@ -240,6 +277,7 @@ function randomSpawnPoint() {
 
 function createEnvironment() {
   scene.background = new THREE.Color(0x0a0706);
+  scene.add(new THREE.HemisphereLight(0x7e748a, 0x261311, 0.5));
 
   const hemi = new THREE.HemisphereLight(0x7e748a, 0x261311, 0.5);
   scene.add(hemi);
@@ -260,6 +298,7 @@ function createEnvironment() {
   lavaGlow.position.set(0, 1.2, 0);
   scene.add(lavaGlow);
 
+  const ground = new THREE.Mesh(new THREE.CircleGeometry(65, 128), new THREE.MeshStandardMaterial({ color: 0x282120, roughness: 0.95 }));
   const ground = new THREE.Mesh(
     new THREE.CircleGeometry(65, 128),
     new THREE.MeshStandardMaterial({ color: 0x282120, roughness: 0.95, metalness: 0.02 })
@@ -268,6 +307,7 @@ function createEnvironment() {
   ground.receiveShadow = true;
   scene.add(ground);
 
+  const runicRing = new THREE.Mesh(new THREE.RingGeometry(5.8, 6.4, 72), new THREE.MeshBasicMaterial({ color: 0xc7542e, transparent: true, opacity: 0.65, side: THREE.DoubleSide }));
   const runicRing = new THREE.Mesh(
     new THREE.RingGeometry(5.8, 6.4, 72),
     new THREE.MeshBasicMaterial({ color: 0xc7542e, transparent: true, opacity: 0.65, side: THREE.DoubleSide })
@@ -278,6 +318,9 @@ function createEnvironment() {
 
   for (let i = 0; i < 90; i += 1) {
     const h = randFloat(0.5, 4.4);
+    const pillar = new THREE.Mesh(new THREE.BoxGeometry(randFloat(0.35, 1.0), h, randFloat(0.35, 1.0)), new THREE.MeshStandardMaterial({ color: randInt(0x2a1f1c, 0x4f3a34), roughness: 0.95 }));
+    const p = randomSpawnPoint().multiplyScalar(randFloat(1.0, 1.9));
+    if (p.length() < 10) p.multiplyScalar(1.7);
     const pillar = new THREE.Mesh(
       new THREE.BoxGeometry(randFloat(0.35, 1.0), h, randFloat(0.35, 1.0)),
       new THREE.MeshStandardMaterial({ color: randInt(0x2a1f1c, 0x4f3a34), roughness: 0.95 })
@@ -296,6 +339,48 @@ function createEnvironment() {
   }
 }
 
+function getAimDirection() {
+  raycaster.setFromCamera(pointer, camera);
+  const point = new THREE.Vector3();
+  raycaster.ray.intersectPlane(worldPlane, point);
+  controls.aimPoint.copy(point);
+  return point.sub(game.hero.group.position).setY(0).normalize();
+}
+
+function spawnEnemy(elite = false) {
+  const roll = elite ? 0.95 : Math.random();
+  const tier = game.wave;
+  let profile;
+  if (roll > 0.88) {
+    profile = { kind: "Brute", life: 80 + tier * 20, speed: 2.1 + tier * 0.15, color: 0x7e3b2f, xp: 24 + tier * 5, damage: 15 + tier * 2, scale: 1.2 };
+  } else if (roll > 0.55) {
+    profile = { kind: "Ghoul", life: 52 + tier * 10, speed: 3.8 + tier * 0.22, color: 0x516b4e, xp: 16 + tier * 4, damage: 10 + tier, scale: 1 };
+  } else {
+    profile = { kind: "Imp", life: 34 + tier * 8, speed: 4.8 + tier * 0.26, color: 0x6e4f84, xp: 10 + tier * 3, damage: 7 + tier, scale: 0.84 };
+  }
+  const e = new Enemy(profile);
+  if (elite) {
+    e.life *= 1.5;
+    e.damage *= 1.4;
+    e.mesh.scale.multiplyScalar(1.15);
+  }
+  game.activeEnemies.push(e);
+}
+
+function shootFireBolt() {
+  if (!game.hero.spendMana(8)) return;
+  const dir = getAimDirection();
+  const p = {
+    type: "fire",
+    damage: (22 + game.hero.level * 6) * game.hero.spellBook.fireScale,
+    ttl: 1.2,
+    radius: 0.28,
+    mesh: new THREE.Mesh(new THREE.SphereGeometry(0.26, 14, 12), new THREE.MeshStandardMaterial({ color: 0xff8c30, emissive: 0xff5a12, emissiveIntensity: 1.5 })),
+    velocity: dir.multiplyScalar(20)
+  };
+  p.mesh.position.copy(game.hero.group.position).add(new THREE.Vector3(0, 1.8, 0));
+  scene.add(p.mesh);
+  game.projectiles.push(p);
 function spawnEnemy() {
   const roll = Math.random();
   const tier = game.wave;
@@ -363,6 +448,21 @@ function shootFireBolt() {
 }
 
 function shootSpiritLance() {
+  if (!game.hero.spendMana(22)) return;
+  const dir = getAimDirection();
+  const p = {
+    type: "spirit",
+    damage: (48 + game.hero.level * 9) * game.hero.spellBook.spiritScale,
+    ttl: 0.95,
+    radius: 0.4,
+    pierce: 2,
+    mesh: new THREE.Mesh(new THREE.ConeGeometry(0.27, 1.4, 16), new THREE.MeshStandardMaterial({ color: 0x72b8ff, emissive: 0x3c77ff, emissiveIntensity: 1.25 })),
+    velocity: dir.multiplyScalar(30)
+  };
+  p.mesh.rotation.x = Math.PI / 2;
+  p.mesh.position.copy(game.hero.group.position).add(new THREE.Vector3(0, 1.7, 0));
+  scene.add(p.mesh);
+  game.projectiles.push(p);
   const manaCost = 22;
   if (!game.hero.spendMana(manaCost)) return;
 
@@ -389,6 +489,28 @@ function shootSpiritLance() {
 }
 
 function castWhirl() {
+  if (!game.hero.spendMana(35)) return;
+  const ring = new THREE.Mesh(new THREE.RingGeometry(0.8, 1.1, 34), new THREE.MeshBasicMaterial({ color: 0xfef7e7, transparent: true, opacity: 0.9, side: THREE.DoubleSide }));
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.copy(game.hero.group.position).setY(0.12);
+  scene.add(ring);
+  game.aoes.push({ mesh: ring, radius: 1.2, growth: 11.5, ttl: 0.64, damage: (42 + game.hero.level * 8) * game.hero.spellBook.whirlScale });
+  addLog("Whirl of steel", "#fff1cd");
+}
+
+function castVoidNova() {
+  if (!game.hero.spellBook.novaUnlocked) return;
+  if (!game.hero.spendMana(40)) return;
+  const ring = new THREE.Mesh(new THREE.RingGeometry(0.9, 1.6, 44), new THREE.MeshBasicMaterial({ color: 0xf1b4ff, transparent: true, opacity: 0.92, side: THREE.DoubleSide }));
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.copy(game.hero.group.position).setY(0.16);
+  scene.add(ring);
+  game.aoes.push({ mesh: ring, radius: 1.3, growth: 13.8, ttl: 0.82, damage: (56 + game.hero.level * 9) * game.hero.spellBook.novaScale });
+  addLog("Void Nova detonates", "#f8c4ff");
+}
+
+function createDeathBurst(position, color) {
+  const burst = new THREE.Mesh(new THREE.SphereGeometry(0.75, 10, 10), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.86 }));
   const manaCost = 35;
   if (!game.hero.spendMana(manaCost)) return;
 
@@ -423,6 +545,7 @@ function createDeathBurst(position, color) {
 }
 
 function spawnLootOrb(pos) {
+  const orb = new THREE.Mesh(new THREE.SphereGeometry(0.2, 10, 10), new THREE.MeshBasicMaterial({ color: 0xf7cf63, transparent: true, opacity: 0.95 }));
   const orb = new THREE.Mesh(
     new THREE.SphereGeometry(0.2, 10, 10),
     new THREE.MeshBasicMaterial({ color: 0xf7cf63, transparent: true, opacity: 0.95 })
@@ -430,6 +553,59 @@ function spawnLootOrb(pos) {
   orb.position.copy(pos).setY(0.3);
   scene.add(orb);
   game.lootOrbs.push({ mesh: orb, ttl: 10 });
+}
+
+function applyAutoEquip(item) {
+  const bonus = { life: 0, mana: 0, fire: 0, spirit: 0, whirl: 0, nova: 0, unlockNova: false };
+  if (item.tier === "magic") {
+    bonus.fire = 0.06;
+    bonus.spirit = 0.05;
+    bonus.life = 6;
+    bonus.mana = 4;
+  } else if (item.tier === "rare") {
+    bonus.fire = 0.08;
+    bonus.spirit = 0.1;
+    bonus.whirl = 0.09;
+    bonus.life = 12;
+    bonus.mana = 10;
+    bonus.unlockNova = true;
+  } else {
+    bonus.fire = 0.12;
+    bonus.spirit = 0.14;
+    bonus.whirl = 0.13;
+    bonus.nova = 0.15;
+    bonus.life = 20;
+    bonus.mana = 16;
+    bonus.unlockNova = true;
+  }
+
+  game.hero.maxLife += bonus.life;
+  game.hero.maxMana += bonus.mana;
+  game.hero.life = Math.min(game.hero.maxLife, game.hero.life + bonus.life);
+  game.hero.mana = Math.min(game.hero.maxMana, game.hero.mana + bonus.mana);
+
+  game.hero.spellBook.fireScale += bonus.fire;
+  game.hero.spellBook.spiritScale += bonus.spirit;
+  game.hero.spellBook.whirlScale += bonus.whirl;
+
+  if (bonus.unlockNova && !game.hero.spellBook.novaUnlocked) {
+    game.hero.spellBook.novaUnlocked = true;
+    addLog("New spell unlocked: Void Nova [Q]", "#f8bcff");
+  } else if (game.hero.spellBook.novaUnlocked) {
+    game.hero.spellBook.novaScale += bonus.nova || 0.05;
+  }
+
+  item.autoEquip = `+${bonus.life} life, +${bonus.mana} mana, spell power increased`;
+  game.equipped.push(item);
+  if (game.equipped.length > 8) game.equipped.shift();
+
+  ui.equipFeed.innerHTML = game.equipped
+    .slice()
+    .reverse()
+    .map((g) => `<div class="gear-item ${g.tier}"><strong>${g.name}</strong><br/><small>${g.autoEquip}</small></div>`)
+    .join("");
+
+  openMenu("inventory", true);
 }
 
 function maybeDropItem(position) {
@@ -449,6 +625,13 @@ function maybeDropItem(position) {
   item.icon = "";
   item.imageSource = "queued";
   game.drops.push(item);
+  if (game.drops.length > 6) game.drops.shift();
+
+  queueItemImageGeneration(item);
+  applyAutoEquip(item);
+  addLog(`Looted + auto-equipped ${item.name}`, item.tier === "legendary" ? "#f9d47f" : "#d4e6ff");
+
+  const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 6, 8), new THREE.MeshBasicMaterial({ color: item.tier === "legendary" ? 0xf9b34d : item.tier === "rare" ? 0x6ca7ff : 0x87dbc5, transparent: true, opacity: 0.65 }));
   game.hero.maxLife += item.score;
   game.hero.maxMana += Math.floor(item.score * 0.6);
   game.hero.life = Math.min(game.hero.maxLife, game.hero.life + item.score);
@@ -519,6 +702,8 @@ async function requestChatGPTItemImage(item) {
   const prompt = `Diablo-style game item icon, centered, dramatic fantasy lighting, dark background, highly detailed digital painting of ${item.tier} item named ${item.name}, game-ready square icon`;
   const res = await fetch("https://api.openai.com/v1/images/generations", {
     method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${imageGenerator.key}` },
+    body: JSON.stringify({ model: "gpt-image-1", prompt, size: "512x512" })
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${imageGenerator.key}`
@@ -543,6 +728,10 @@ async function requestChatGPTItemImage(item) {
 
 function generateLocalItemIcon(item) {
   const [bright, mid, accent] = imageGenerator.fallbackPalette[item.tier] ?? imageGenerator.fallbackPalette.magic;
+  const c = document.createElement("canvas");
+  c.width = 96;
+  c.height = 96;
+  const ctx = c.getContext("2d");
   const canvasEl = document.createElement("canvas");
   canvasEl.width = 96;
   canvasEl.height = 96;
@@ -570,6 +759,45 @@ function generateLocalItemIcon(item) {
   ctx.fillStyle = "#f7eee3";
   ctx.font = "bold 9px sans-serif";
   ctx.fillText(item.tier.toUpperCase(), 48, 80);
+  return c.toDataURL("image/png");
+}
+
+function openMenu(name, open) {
+  game.menu[name] = open;
+  ui.inventoryPopup.classList.toggle("hidden", !game.menu.inventory);
+  ui.pauseMenu.classList.toggle("hidden", !game.menu.pause);
+  ui.cheatMenu.classList.toggle("hidden", !game.menu.cheat);
+  game.paused = game.menu.inventory || game.menu.pause || game.menu.cheat;
+}
+
+function toggleMenu(name) {
+  openMenu(name, !game.menu[name]);
+}
+
+function runCheat(type) {
+  if (type === "heal") {
+    game.hero.life = game.hero.maxLife;
+    ui.cheatStatus.textContent = "Cheat: full heal.";
+  } else if (type === "mana") {
+    game.hero.mana = game.hero.maxMana;
+    ui.cheatStatus.textContent = "Cheat: full mana.";
+  } else if (type === "level") {
+    game.hero.gainXp(game.hero.nextLevelXp);
+    ui.cheatStatus.textContent = "Cheat: level boosted.";
+  } else if (type === "spawn") {
+    for (let i = 0; i < 4; i += 1) spawnEnemy(true);
+    ui.cheatStatus.textContent = "Cheat: spawned elite wave.";
+  } else if (type === "gold") {
+    game.scoreGold += 500;
+    ui.cheatStatus.textContent = "Cheat: +500 gold.";
+  } else if (type === "god") {
+    game.dev.godMode = !game.dev.godMode;
+    ui.cheatStatus.textContent = `Cheat: God mode ${game.dev.godMode ? "enabled" : "disabled"}.`;
+  }
+}
+
+function updateHero(dt) {
+  const move = new THREE.Vector3((controls.d ? 1 : 0) - (controls.a ? 1 : 0), 0, (controls.s ? 1 : 0) - (controls.w ? 1 : 0));
   return canvasEl.toDataURL("image/png");
 }
 
@@ -597,6 +825,7 @@ function updateHero(dt) {
   game.hero.cooldowns.fire = Math.max(0, game.hero.cooldowns.fire - dt);
   game.hero.cooldowns.spirit = Math.max(0, game.hero.cooldowns.spirit - dt);
   game.hero.cooldowns.whirl = Math.max(0, game.hero.cooldowns.whirl - dt);
+  game.hero.cooldowns.nova = Math.max(0, game.hero.cooldowns.nova - dt);
 
   if (controls.fire && game.hero.cooldowns.fire <= 0) {
     shootFireBolt();
@@ -612,6 +841,13 @@ function updateHero(dt) {
     castWhirl();
     game.hero.cooldowns.whirl = 9;
   }
+  if (controls.nova && game.hero.cooldowns.nova <= 0 && game.hero.spellBook.novaUnlocked) {
+    castVoidNova();
+    game.hero.cooldowns.nova = 7.5;
+  }
+
+  controls.whirl = false;
+  controls.nova = false;
 
   controls.whirl = false;
 }
@@ -628,6 +864,8 @@ function updateProjectiles(dt) {
       const d = enemy.mesh.position.distanceTo(p.mesh.position);
       if (d < 0.8 + p.radius) {
         enemy.hit(p.damage);
+        if (p.type === "fire") p.ttl = -1;
+        if (p.type === "spirit") {
         hitsThisFrame += 1;
         if (p.type === "fire") {
           p.ttl = -1;
@@ -658,6 +896,7 @@ function updateAoes(dt) {
       a.radius += a.growth * dt;
       a.mesh.scale.setScalar(1 + a.radius);
     }
+    if (a.mesh.material?.opacity !== undefined) a.mesh.material.opacity = Math.max(0, a.ttl * 1.8);
 
     a.mesh.material.opacity = Math.max(0, a.ttl * 1.8);
 
@@ -665,6 +904,7 @@ function updateAoes(dt) {
       for (const enemy of game.activeEnemies) {
         if (enemy.dead) continue;
         const dist = enemy.mesh.position.distanceTo(a.mesh.position);
+        if (dist < a.radius + 1.0) enemy.hit(a.damage * dt * 2.2);
         if (dist < a.radius + 1.0) {
           enemy.hit(a.damage * dt * 2.2);
         }
@@ -711,6 +951,7 @@ function spawnLoop(time) {
 }
 
 function checkWaveProgress() {
+  const nextMilestone = game.targetKillMilestones[game.wave - 1] ?? game.wave * 35;
   const nextMilestone = game.targetKillMilestones[game.wave - 1] ?? (game.wave * 35);
   if (game.kills >= nextMilestone) {
     game.wave += 1;
@@ -748,6 +989,7 @@ function refreshUI() {
   ui.kills.textContent = `${game.kills}`;
   ui.gold.textContent = `${game.scoreGold}`;
 
+  ui.logEntries.innerHTML = game.combatLog.map((entry) => `<li style="color:${entry.color}">${entry.text}</li>`).join("");
   ui.logEntries.innerHTML = game.combatLog
     .map((entry) => `<li style="color:${entry.color}">${entry.text}</li>`)
     .join("");
@@ -766,6 +1008,15 @@ function refreshUI() {
     `)
     .join("");
 
+  ui.skillNova.classList.toggle("locked", !h.spellBook.novaUnlocked);
+
+  for (const [key, el] of Object.entries(ui.cooldowns)) {
+    if (key === "nova" && !h.spellBook.novaUnlocked) {
+      el.textContent = "Locked";
+      el.classList.remove("ready");
+      continue;
+    }
+    const cd = h.cooldowns[key];
   for (const [key, el] of Object.entries(ui.cooldowns)) {
     const cd = game.hero.cooldowns[key];
     if (cd <= 0) {
@@ -799,6 +1050,20 @@ function initInput() {
 
   ui.openaiApiKey.addEventListener("input", () => {
     imageGenerator.key = ui.openaiApiKey.value.trim();
+    if (!imageGenerator.key) setGeneratorStatus("No API key set. Free local generation remains active.", "#ffd79e");
+  });
+
+  ui.closeInventoryPopup.addEventListener("click", () => openMenu("inventory", false));
+  ui.resumeGame.addEventListener("click", () => openMenu("pause", false));
+  ui.closeCheatMenu.addEventListener("click", () => openMenu("cheat", false));
+
+  ui.cheatHeal.addEventListener("click", () => runCheat("heal"));
+  ui.cheatMana.addEventListener("click", () => runCheat("mana"));
+  ui.cheatLevel.addEventListener("click", () => runCheat("level"));
+  ui.cheatSpawn.addEventListener("click", () => runCheat("spawn"));
+  ui.cheatGold.addEventListener("click", () => runCheat("gold"));
+  ui.cheatGodMode.addEventListener("click", () => runCheat("god"));
+
     if (!imageGenerator.key) {
       setGeneratorStatus("No API key set. Free local generation remains active.", "#ffd79e");
     }
@@ -830,8 +1095,24 @@ function initInput() {
   window.addEventListener("keydown", (ev) => {
     const k = ev.key.toLowerCase();
     if (k in controls) controls[k] = true;
+
     if (ev.code === "Space") {
       controls.whirl = true;
+      ev.preventDefault();
+    }
+
+    if (ev.code === "KeyQ") controls.nova = true;
+
+    if (ev.code === "Escape") {
+      toggleMenu("pause");
+      ev.preventDefault();
+    }
+    if (ev.code === "KeyI") {
+      toggleMenu("inventory");
+      ev.preventDefault();
+    }
+    if (ev.code === "Backquote") {
+      toggleMenu("cheat");
       ev.preventDefault();
     }
   });
@@ -846,6 +1127,7 @@ function animate() {
   const dt = Math.min(clock.getDelta(), 0.04);
   const elapsed = clock.elapsedTime;
 
+  if (!game.gameOver && !game.paused) {
   if (!game.gameOver) {
     updateHero(dt);
     spawnLoop(elapsed);
@@ -869,6 +1151,9 @@ function start() {
   pointer.y = 0;
 
   addLog("Entered The Fallen Cathedral", "#ead8bd");
+  addLog("Hotkeys: I inventory · Esc pause · ` dev cheats", "#d0c2aa");
+  addLog("Gear now auto-equips and can unlock Void Nova (Q)", "#c6a8ff");
+  ui.objective.textContent = "Wave 1: clear cultists, auto-equip loot, and master your spellbook.";
   addLog("Hold LMB to cast Fire Bolt", "#ffc27f");
   addLog("Hold RMB for Spirit Lance · Space for Whirl", "#a9cbff");
   ui.objective.textContent = "Wave 1: clear cultists and gather infernal loot.";
