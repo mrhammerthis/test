@@ -57,6 +57,10 @@ const ui = {
     spirit: document.getElementById("cdSpirit"),
     whirl: document.getElementById("cdWhirl"),
     nova: document.getElementById("cdNova")
+  cooldowns: {
+    fire: document.getElementById("cdFire"),
+    spirit: document.getElementById("cdSpirit"),
+    whirl: document.getElementById("cdWhirl")
   }
 };
 
@@ -69,6 +73,7 @@ const controls = {
   spirit: false,
   whirl: false,
   nova: false,
+  pointerLocked: false,
   aimPoint: new THREE.Vector3()
 };
 
@@ -79,6 +84,10 @@ const game = {
   combatLog: [],
   drops: [],
   equipped: [],
+  totalSpawned: 0,
+  scoreGold: 0,
+  combatLog: [],
+  drops: [],
   lastSpawnAt: 0,
   spawnCooldown: 1.0,
   activeEnemies: [],
@@ -126,6 +135,13 @@ class Hero {
       novaScale: 1,
       novaUnlocked: false
     };
+
+    this.cooldowns = {
+      fire: 0,
+      spirit: 0,
+      whirl: 0
+    };
+
     this.setupMesh();
   }
 
@@ -155,6 +171,8 @@ class Hero {
 
     [torso, hood, shoulderL, shoulderR, orb, feet].forEach((mesh) => this.group.add(mesh));
     this.group.position.y = 0.15;
+    this.group.castShadow = true;
+
     scene.add(this.group);
   }
 
@@ -194,6 +212,7 @@ class Enemy {
   constructor({ kind, life, speed, color, xp, damage, scale }) {
     this.kind = kind;
     this.life = life;
+    this.maxLife = life;
     this.speed = speed;
     this.xp = xp;
     this.damage = damage;
@@ -217,6 +236,7 @@ class Enemy {
 
   update(dt) {
     if (this.dead || game.gameOver) return;
+
     const heroPos = game.hero.group.position;
     tmpV.subVectors(heroPos, this.mesh.position);
     const dist = tmpV.length();
@@ -259,6 +279,9 @@ function createEnvironment() {
   scene.background = new THREE.Color(0x0a0706);
   scene.add(new THREE.HemisphereLight(0x7e748a, 0x261311, 0.5));
 
+  const hemi = new THREE.HemisphereLight(0x7e748a, 0x261311, 0.5);
+  scene.add(hemi);
+
   const moon = new THREE.DirectionalLight(0xd5d8ff, 1.2);
   moon.position.set(-25, 44, 18);
   moon.castShadow = true;
@@ -276,11 +299,19 @@ function createEnvironment() {
   scene.add(lavaGlow);
 
   const ground = new THREE.Mesh(new THREE.CircleGeometry(65, 128), new THREE.MeshStandardMaterial({ color: 0x282120, roughness: 0.95 }));
+  const ground = new THREE.Mesh(
+    new THREE.CircleGeometry(65, 128),
+    new THREE.MeshStandardMaterial({ color: 0x282120, roughness: 0.95, metalness: 0.02 })
+  );
   ground.rotation.x = -Math.PI / 2;
   ground.receiveShadow = true;
   scene.add(ground);
 
   const runicRing = new THREE.Mesh(new THREE.RingGeometry(5.8, 6.4, 72), new THREE.MeshBasicMaterial({ color: 0xc7542e, transparent: true, opacity: 0.65, side: THREE.DoubleSide }));
+  const runicRing = new THREE.Mesh(
+    new THREE.RingGeometry(5.8, 6.4, 72),
+    new THREE.MeshBasicMaterial({ color: 0xc7542e, transparent: true, opacity: 0.65, side: THREE.DoubleSide })
+  );
   runicRing.rotation.x = -Math.PI / 2;
   runicRing.position.y = 0.03;
   scene.add(runicRing);
@@ -290,6 +321,16 @@ function createEnvironment() {
     const pillar = new THREE.Mesh(new THREE.BoxGeometry(randFloat(0.35, 1.0), h, randFloat(0.35, 1.0)), new THREE.MeshStandardMaterial({ color: randInt(0x2a1f1c, 0x4f3a34), roughness: 0.95 }));
     const p = randomSpawnPoint().multiplyScalar(randFloat(1.0, 1.9));
     if (p.length() < 10) p.multiplyScalar(1.7);
+    const pillar = new THREE.Mesh(
+      new THREE.BoxGeometry(randFloat(0.35, 1.0), h, randFloat(0.35, 1.0)),
+      new THREE.MeshStandardMaterial({ color: randInt(0x2a1f1c, 0x4f3a34), roughness: 0.95 })
+    );
+
+    const p = randomSpawnPoint().multiplyScalar(randFloat(1.0, 1.9));
+    if (p.length() < 10) {
+      p.multiplyScalar(1.7);
+    }
+
     pillar.position.set(p.x, h * 0.5, p.z);
     pillar.rotation.y = randFloat(0, Math.PI);
     pillar.castShadow = true;
@@ -340,6 +381,69 @@ function shootFireBolt() {
   p.mesh.position.copy(game.hero.group.position).add(new THREE.Vector3(0, 1.8, 0));
   scene.add(p.mesh);
   game.projectiles.push(p);
+function spawnEnemy() {
+  const roll = Math.random();
+  const tier = game.wave;
+  let profile;
+
+  if (roll > 0.88) {
+    profile = {
+      kind: "Brute",
+      life: 80 + tier * 20,
+      speed: 2.1 + tier * 0.15,
+      color: 0x7e3b2f,
+      xp: 24 + tier * 5,
+      damage: 15 + tier * 2,
+      scale: 1.2
+    };
+  } else if (roll > 0.55) {
+    profile = {
+      kind: "Ghoul",
+      life: 52 + tier * 10,
+      speed: 3.8 + tier * 0.22,
+      color: 0x516b4e,
+      xp: 16 + tier * 4,
+      damage: 10 + tier,
+      scale: 1
+    };
+  } else {
+    profile = {
+      kind: "Imp",
+      life: 34 + tier * 8,
+      speed: 4.8 + tier * 0.26,
+      color: 0x6e4f84,
+      xp: 10 + tier * 3,
+      damage: 7 + tier,
+      scale: 0.84
+    };
+  }
+
+  const enemy = new Enemy(profile);
+  game.activeEnemies.push(enemy);
+  game.totalSpawned += 1;
+}
+
+function shootFireBolt() {
+  const manaCost = 8;
+  if (!game.hero.spendMana(manaCost)) return;
+
+  const dir = getAimDirection();
+  const projectile = {
+    type: "fire",
+    damage: 22 + game.hero.level * 6,
+    speed: 20,
+    ttl: 1.2,
+    radius: 0.28,
+    mesh: new THREE.Mesh(
+      new THREE.SphereGeometry(0.26, 14, 12),
+      new THREE.MeshStandardMaterial({ color: 0xff8c30, emissive: 0xff5a12, emissiveIntensity: 1.5 })
+    ),
+    velocity: dir.multiplyScalar(20)
+  };
+
+  projectile.mesh.position.copy(game.hero.group.position).add(new THREE.Vector3(0, 1.8, 0));
+  scene.add(projectile.mesh);
+  game.projectiles.push(projectile);
   addLog("Cast Fire Bolt", "#ffc27f");
 }
 
@@ -359,6 +463,28 @@ function shootSpiritLance() {
   p.mesh.position.copy(game.hero.group.position).add(new THREE.Vector3(0, 1.7, 0));
   scene.add(p.mesh);
   game.projectiles.push(p);
+  const manaCost = 22;
+  if (!game.hero.spendMana(manaCost)) return;
+
+  const dir = getAimDirection();
+  const projectile = {
+    type: "spirit",
+    damage: 48 + game.hero.level * 9,
+    speed: 30,
+    ttl: 0.95,
+    radius: 0.4,
+    pierce: 2,
+    mesh: new THREE.Mesh(
+      new THREE.ConeGeometry(0.27, 1.4, 16),
+      new THREE.MeshStandardMaterial({ color: 0x72b8ff, emissive: 0x3c77ff, emissiveIntensity: 1.25 })
+    ),
+    velocity: dir.multiplyScalar(30)
+  };
+
+  projectile.mesh.rotation.x = Math.PI / 2;
+  projectile.mesh.position.copy(game.hero.group.position).add(new THREE.Vector3(0, 1.7, 0));
+  scene.add(projectile.mesh);
+  game.projectiles.push(projectile);
   addLog("Unleash Spirit Lance", "#9fc4ff");
 }
 
@@ -385,6 +511,34 @@ function castVoidNova() {
 
 function createDeathBurst(position, color) {
   const burst = new THREE.Mesh(new THREE.SphereGeometry(0.75, 10, 10), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.86 }));
+  const manaCost = 35;
+  if (!game.hero.spendMana(manaCost)) return;
+
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(0.8, 1.1, 34),
+    new THREE.MeshBasicMaterial({ color: 0xfef7e7, transparent: true, opacity: 0.9, side: THREE.DoubleSide })
+  );
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.copy(game.hero.group.position).setY(0.12);
+  scene.add(ring);
+
+  game.aoes.push({ mesh: ring, radius: 1.2, growth: 11.5, ttl: 0.64, damage: 42 + game.hero.level * 8 });
+  addLog("Whirl of steel", "#fff1cd");
+}
+
+function getAimDirection() {
+  raycaster.setFromCamera(pointer, camera);
+  const point = new THREE.Vector3();
+  raycaster.ray.intersectPlane(worldPlane, point);
+  controls.aimPoint.copy(point);
+  return point.sub(game.hero.group.position).setY(0).normalize();
+}
+
+function createDeathBurst(position, color) {
+  const burst = new THREE.Mesh(
+    new THREE.SphereGeometry(0.75, 10, 10),
+    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.86 })
+  );
   burst.position.copy(position);
   scene.add(burst);
   game.aoes.push({ mesh: burst, radius: 0, growth: 9, ttl: 0.3, damage: 0, visualOnly: true });
@@ -392,6 +546,10 @@ function createDeathBurst(position, color) {
 
 function spawnLootOrb(pos) {
   const orb = new THREE.Mesh(new THREE.SphereGeometry(0.2, 10, 10), new THREE.MeshBasicMaterial({ color: 0xf7cf63, transparent: true, opacity: 0.95 }));
+  const orb = new THREE.Mesh(
+    new THREE.SphereGeometry(0.2, 10, 10),
+    new THREE.MeshBasicMaterial({ color: 0xf7cf63, transparent: true, opacity: 0.95 })
+  );
   orb.position.copy(pos).setY(0.3);
   scene.add(orb);
   game.lootOrbs.push({ mesh: orb, ttl: 10 });
@@ -474,6 +632,19 @@ function maybeDropItem(position) {
   addLog(`Looted + auto-equipped ${item.name}`, item.tier === "legendary" ? "#f9d47f" : "#d4e6ff");
 
   const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 6, 8), new THREE.MeshBasicMaterial({ color: item.tier === "legendary" ? 0xf9b34d : item.tier === "rare" ? 0x6ca7ff : 0x87dbc5, transparent: true, opacity: 0.65 }));
+  game.hero.maxLife += item.score;
+  game.hero.maxMana += Math.floor(item.score * 0.6);
+  game.hero.life = Math.min(game.hero.maxLife, game.hero.life + item.score);
+  game.hero.mana = Math.min(game.hero.maxMana, game.hero.mana + item.score);
+
+  if (game.drops.length > 6) game.drops.shift();
+  queueItemImageGeneration(item);
+  addLog(`Looted ${item.name}`, item.tier === "legendary" ? "#f9d47f" : "#d4e6ff");
+
+  const beam = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.08, 0.08, 6, 8),
+    new THREE.MeshBasicMaterial({ color: item.tier === "legendary" ? 0xf9b34d : item.tier === "rare" ? 0x6ca7ff : 0x87dbc5, transparent: true, opacity: 0.65 })
+  );
   beam.position.copy(position).setY(3);
   scene.add(beam);
   game.aoes.push({ mesh: beam, ttl: 1.5, growth: 0, radius: 0, visualOnly: true });
@@ -492,6 +663,7 @@ function queueItemImageGeneration(item) {
 async function processImageQueue() {
   if (imageGenerator.busy || imageGenerator.queue.length === 0) return;
   imageGenerator.busy = true;
+
   const item = imageGenerator.queue.shift();
   const key = `${item.tier}:${item.name}`;
 
@@ -532,12 +704,22 @@ async function requestChatGPTItemImage(item) {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${imageGenerator.key}` },
     body: JSON.stringify({ model: "gpt-image-1", prompt, size: "512x512" })
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${imageGenerator.key}`
+    },
+    body: JSON.stringify({
+      model: "gpt-image-1",
+      prompt,
+      size: "512x512"
+    })
   });
 
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`HTTP ${res.status} ${text.slice(0, 120)}`);
   }
+
   const data = await res.json();
   const b64 = data?.data?.[0]?.b64_json;
   if (!b64) throw new Error("Missing image payload");
@@ -550,6 +732,10 @@ function generateLocalItemIcon(item) {
   c.width = 96;
   c.height = 96;
   const ctx = c.getContext("2d");
+  const canvasEl = document.createElement("canvas");
+  canvasEl.width = 96;
+  canvasEl.height = 96;
+  const ctx = canvasEl.getContext("2d");
 
   const gradient = ctx.createRadialGradient(40, 30, 4, 50, 52, 60);
   gradient.addColorStop(0, bright);
@@ -557,6 +743,7 @@ function generateLocalItemIcon(item) {
   gradient.addColorStop(1, "#080808");
   ctx.fillStyle = gradient;
   ctx.fillRect(0, 0, 96, 96);
+
   ctx.strokeStyle = accent;
   ctx.lineWidth = 3;
   ctx.strokeRect(3, 3, 90, 90);
@@ -611,6 +798,16 @@ function runCheat(type) {
 
 function updateHero(dt) {
   const move = new THREE.Vector3((controls.d ? 1 : 0) - (controls.a ? 1 : 0), 0, (controls.s ? 1 : 0) - (controls.w ? 1 : 0));
+  return canvasEl.toDataURL("image/png");
+}
+
+function updateHero(dt) {
+  const move = new THREE.Vector3(
+    (controls.d ? 1 : 0) - (controls.a ? 1 : 0),
+    0,
+    (controls.s ? 1 : 0) - (controls.w ? 1 : 0)
+  );
+
   if (move.lengthSq() > 0) {
     move.normalize();
     game.hero.group.position.addScaledVector(move, game.hero.speed * dt);
@@ -634,10 +831,12 @@ function updateHero(dt) {
     shootFireBolt();
     game.hero.cooldowns.fire = 0.2;
   }
+
   if (controls.spirit && game.hero.cooldowns.spirit <= 0) {
     shootSpiritLance();
     game.hero.cooldowns.spirit = 0.65;
   }
+
   if (controls.whirl && game.hero.cooldowns.whirl <= 0) {
     castWhirl();
     game.hero.cooldowns.whirl = 9;
@@ -649,6 +848,8 @@ function updateHero(dt) {
 
   controls.whirl = false;
   controls.nova = false;
+
+  controls.whirl = false;
 }
 
 function updateProjectiles(dt) {
@@ -657,6 +858,7 @@ function updateProjectiles(dt) {
     p.ttl -= dt;
     p.mesh.position.addScaledVector(p.velocity, dt);
 
+    let hitsThisFrame = 0;
     for (const enemy of game.activeEnemies) {
       if (enemy.dead) continue;
       const d = enemy.mesh.position.distanceTo(p.mesh.position);
@@ -664,10 +866,18 @@ function updateProjectiles(dt) {
         enemy.hit(p.damage);
         if (p.type === "fire") p.ttl = -1;
         if (p.type === "spirit") {
+        hitsThisFrame += 1;
+        if (p.type === "fire") {
+          p.ttl = -1;
+        } else if (p.type === "spirit") {
           p.pierce -= 1;
           if (p.pierce < 0) p.ttl = -1;
         }
       }
+    }
+
+    if (hitsThisFrame > 0) {
+      p.mesh.scale.multiplyScalar(0.94);
     }
 
     if (p.ttl <= 0) {
@@ -681,17 +891,23 @@ function updateAoes(dt) {
   for (let i = game.aoes.length - 1; i >= 0; i -= 1) {
     const a = game.aoes[i];
     a.ttl -= dt;
+
     if (a.growth) {
       a.radius += a.growth * dt;
       a.mesh.scale.setScalar(1 + a.radius);
     }
     if (a.mesh.material?.opacity !== undefined) a.mesh.material.opacity = Math.max(0, a.ttl * 1.8);
 
+    a.mesh.material.opacity = Math.max(0, a.ttl * 1.8);
+
     if (!a.visualOnly && a.damage > 0) {
       for (const enemy of game.activeEnemies) {
         if (enemy.dead) continue;
         const dist = enemy.mesh.position.distanceTo(a.mesh.position);
         if (dist < a.radius + 1.0) enemy.hit(a.damage * dt * 2.2);
+        if (dist < a.radius + 1.0) {
+          enemy.hit(a.damage * dt * 2.2);
+        }
       }
     }
 
@@ -726,6 +942,7 @@ function updateLoot(dt) {
 function spawnLoop(time) {
   const alive = game.activeEnemies.filter((e) => !e.dead).length;
   const cap = 7 + game.wave * 2;
+
   if (alive < cap && time - game.lastSpawnAt > game.spawnCooldown) {
     spawnEnemy();
     game.lastSpawnAt = time;
@@ -735,6 +952,7 @@ function spawnLoop(time) {
 
 function checkWaveProgress() {
   const nextMilestone = game.targetKillMilestones[game.wave - 1] ?? game.wave * 35;
+  const nextMilestone = game.targetKillMilestones[game.wave - 1] ?? (game.wave * 35);
   if (game.kills >= nextMilestone) {
     game.wave += 1;
     addLog(`Wave ${game.wave} begins. Demons grow stronger.`, "#ffb98d");
@@ -763,6 +981,7 @@ function refreshUI() {
   ui.lifeFill.style.width = `${(h.life / h.maxLife) * 100}%`;
   ui.manaFill.style.width = `${(h.mana / h.maxMana) * 100}%`;
   ui.xpFill.style.width = `${(h.xp / h.nextLevelXp) * 100}%`;
+
   ui.lifeText.textContent = `${Math.round(h.life)} / ${Math.round(h.maxLife)}`;
   ui.manaText.textContent = `${Math.round(h.mana)} / ${Math.round(h.maxMana)}`;
   ui.xpText.textContent = `${Math.round(h.xp)} / ${h.nextLevelXp}`;
@@ -771,6 +990,9 @@ function refreshUI() {
   ui.gold.textContent = `${game.scoreGold}`;
 
   ui.logEntries.innerHTML = game.combatLog.map((entry) => `<li style="color:${entry.color}">${entry.text}</li>`).join("");
+  ui.logEntries.innerHTML = game.combatLog
+    .map((entry) => `<li style="color:${entry.color}">${entry.text}</li>`)
+    .join("");
 
   ui.drops.innerHTML = game.drops
     .slice()
@@ -795,6 +1017,8 @@ function refreshUI() {
       continue;
     }
     const cd = h.cooldowns[key];
+  for (const [key, el] of Object.entries(ui.cooldowns)) {
+    const cd = game.hero.cooldowns[key];
     if (cd <= 0) {
       el.textContent = "Ready";
       el.classList.add("ready");
@@ -808,6 +1032,7 @@ function refreshUI() {
 function randFloat(min, max) {
   return min + Math.random() * (max - min);
 }
+
 function randInt(min, max) {
   return Math.floor(min + Math.random() * (max - min + 1));
 }
@@ -838,6 +1063,11 @@ function initInput() {
   ui.cheatSpawn.addEventListener("click", () => runCheat("spawn"));
   ui.cheatGold.addEventListener("click", () => runCheat("gold"));
   ui.cheatGodMode.addEventListener("click", () => runCheat("god"));
+
+    if (!imageGenerator.key) {
+      setGeneratorStatus("No API key set. Free local generation remains active.", "#ffd79e");
+    }
+  });
 
   window.addEventListener("resize", () => {
     camera.aspect = window.innerWidth / window.innerHeight;
@@ -898,6 +1128,7 @@ function animate() {
   const elapsed = clock.elapsedTime;
 
   if (!game.gameOver && !game.paused) {
+  if (!game.gameOver) {
     updateHero(dt);
     spawnLoop(elapsed);
     updateEnemies(dt);
@@ -915,6 +1146,7 @@ function start() {
   createEnvironment();
   game.hero = new Hero();
   initInput();
+
   pointer.x = 0;
   pointer.y = 0;
 
@@ -922,6 +1154,9 @@ function start() {
   addLog("Hotkeys: I inventory · Esc pause · ` dev cheats", "#d0c2aa");
   addLog("Gear now auto-equips and can unlock Void Nova (Q)", "#c6a8ff");
   ui.objective.textContent = "Wave 1: clear cultists, auto-equip loot, and master your spellbook.";
+  addLog("Hold LMB to cast Fire Bolt", "#ffc27f");
+  addLog("Hold RMB for Spirit Lance · Space for Whirl", "#a9cbff");
+  ui.objective.textContent = "Wave 1: clear cultists and gather infernal loot.";
 
   animate();
 }
