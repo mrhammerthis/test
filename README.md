@@ -41,7 +41,24 @@ This project is a highly detailed, browser-based action-RPG prototype inspired b
 
 ## Run locally
 
-Because modules are loaded via ES modules and Three.js CDN, use a local web server:
+Use the launcher (recommended):
+
+```bash
+./scripts/launch_game.sh
+```
+
+The launcher validates prerequisites and starts the local server on port `4173` by default.
+
+Useful options:
+
+```bash
+PORT=5000 ./scripts/launch_game.sh
+AUTO_OPEN=1 ./scripts/launch_game.sh
+HOST=127.0.0.1 ./scripts/launch_game.sh
+PYTHON_BIN=python3 ./scripts/launch_game.sh
+```
+
+Manual fallback:
 
 ```bash
 python3 -m http.server 4173
